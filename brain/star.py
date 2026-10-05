@@ -1,14 +1,13 @@
 import math
 import random
 import tkinter as tk
+from datetime import datetime
 
 
 class WiseStar:
-    """Animated Golden Star with a living day/night environment."""
+    """Animated Golden Star with a cinematic, smoothly transitioning environment."""
 
-    STATES = {
-        "idle", "listening", "thinking", "speaking", "error", "goodbye"
-    }
+    STATES = {"idle", "listening", "thinking", "speaking", "error", "goodbye"}
 
     EMOTION_SETTINGS = {
         "neutral": (1.00, 1.00),
@@ -16,6 +15,14 @@ class WiseStar:
         "sad": (0.92, 0.72),
         "tired": (0.88, 0.62),
         "bored": (0.94, 0.78),
+    }
+
+    SCENE_PALETTES = {
+        "night": ("#02040b", "#10182c"),
+        "evening": ("#130d22", "#50315a"),
+        "sunset": ("#3b1830", "#e28a43"),
+        "sunrise": ("#8b4c38", "#f7c77a"),
+        "day": ("#1685c4", "#bde8ff"),
     }
 
     def __init__(self, parent, width=560, height=500):
@@ -28,6 +35,11 @@ class WiseStar:
         self.rotation = 0.0
         self._after_id = None
         self._closing = False
+        self._last_scene = "night"
+        self._target_scene = "night"
+        self._transition_start = None
+        self._transition_duration = 2.5
+
         self.environment = {
             "scene": "night",
             "location": "Nairobi, Kenya",
@@ -35,6 +47,7 @@ class WiseStar:
             "weather": "Weather unavailable",
             "sunrise": None,
             "sunset": None,
+            "time": datetime.now(),
         }
 
         self.canvas = tk.Canvas(
@@ -71,8 +84,28 @@ class WiseStar:
         self.emotion = emotion if emotion in self.EMOTION_SETTINGS else "neutral"
 
     def set_environment(self, data):
-        if data:
-            self.environment.update(data)
+        if not data:
+            return
+        old_scene = self.environment.get("scene", "night")
+        self.environment.update(data)
+        new_scene = self.environment.get("scene", old_scene)
+        if new_scene != self._target_scene:
+            self._last_scene = self._target_scene
+            self._target_scene = new_scene
+            self._transition_start = self._clock_seconds()
+
+    def _clock_seconds(self):
+        return datetime.now().timestamp()
+
+    def _transition_progress(self):
+        if self._transition_start is None:
+            return 1.0
+        progress = (self._clock_seconds() - self._transition_start) / self._transition_duration
+        if progress >= 1.0:
+            self._last_scene = self._target_scene
+            self._transition_start = None
+            return 1.0
+        return max(0.0, progress)
 
     def _state_motion(self):
         return {
@@ -93,33 +126,6 @@ class WiseStar:
                            cy + math.sin(angle) * radius))
         return points
 
-    def _draw_background(self):
-        scene = self.environment.get("scene", "night")
-        w, h = self.width, self.height
-
-        # Layered bands create a lightweight cinematic gradient without dependencies.
-        if scene in {"sunrise", "sunset"}:
-            top, bottom = "#100d18", "#8a4b20"
-        elif scene in {"day"}:
-            top, bottom = "#102033", "#31556a"
-        elif scene == "evening":
-            top, bottom = "#100d20", "#34244a"
-        else:
-            top, bottom = "#02030a", "#090b18"
-
-        bands = 18
-        for i in range(bands):
-            t = i / (bands - 1)
-            fill = self._blend_hex(top, bottom, t)
-            y0 = h * i / bands
-            y1 = h * (i + 1) / bands + 1
-            self.canvas.create_rectangle(0, y0, w, y1, fill=fill, outline="")
-
-        if scene in {"night", "evening"}:
-            self._draw_space()
-        else:
-            self._draw_landscape(scene)
-
     def _blend_hex(self, a, b, t):
         a = a.lstrip("#")
         b = b.lstrip("#")
@@ -129,115 +135,230 @@ class WiseStar:
         ]
         return "#" + "".join(f"{v:02x}" for v in values)
 
-    def _draw_space(self):
+    def _current_palette(self):
+        progress = self._transition_progress()
+        a = self.SCENE_PALETTES.get(self._last_scene, self.SCENE_PALETTES["night"])
+        b = self.SCENE_PALETTES.get(self._target_scene, self.SCENE_PALETTES["night"])
+        return tuple(self._blend_hex(a[i], b[i], progress) for i in range(2)), progress
+
+    def _draw_background(self):
+        (top, bottom), transition = self._current_palette()
+        scene = self._target_scene
         w, h = self.width, self.height
 
-        # Deep-space star field.
+        bands = 22 if transition >= 0.999 else 12
+        for i in range(bands):
+            t = i / (bands - 1)
+            fill = self._blend_hex(top, bottom, t)
+            y0 = h * i / bands
+            y1 = h * (i + 1) / bands + 1
+            self.canvas.create_rectangle(0, y0, w, y1, fill=fill, outline="")
+
+        if scene in {"night", "evening"}:
+            self._draw_space(transition)
+        else:
+            self._draw_day_world(scene, transition)
+
+        if transition < 1.0:
+            old_is_space = self._last_scene in {"night", "evening"}
+            new_is_space = scene in {"night", "evening"}
+            if old_is_space != new_is_space:
+                # The palette crossfade carries the transition; keep both worlds
+                # lightweight while they overlap.
+                if old_is_space:
+                    self._draw_space_overlay(1.0 - transition)
+                else:
+                    self._draw_day_overlay(1.0 - transition)
+
+    def _draw_space(self, strength=1.0):
+        w, h = self.width, self.height
         for p in self.particles:
             p["y"] -= p["speed"] * 0.30
             if p["y"] < 0.03:
                 p["y"] = 0.97
-            x = p["x"] * w
-            y = p["y"] * h
+            x, y = p["x"] * w, p["y"] * h
             r = p["size"]
             self.canvas.create_oval(x-r, y-r, x+r, y+r,
                                     fill="#d8c38d", outline="")
 
-        # Moon and atmospheric halo.
         mx, my = w * 0.79, h * 0.23
         mr = min(w, h) * 0.052
-        for factor, fill in ((2.4, "#121525"), (1.8, "#20243a"),
-                             (1.35, "#4a4a4c"), (1.0, "#e4ddc5")):
+        for factor, fill in (
+            (2.4, "#11182a"), (1.8, "#20283d"),
+            (1.35, "#5b5d63"), (1.0, "#e4ddc5")
+        ):
             r = mr * factor
             self.canvas.create_oval(mx-r, my-r, mx+r, my+r,
                                     fill=fill, outline="")
-        self.canvas.create_oval(mx-mr*.35, my-mr*.10,
-                                mx-mr*.02, my+mr*.20,
-                                fill="#b9b29d", outline="")
 
-        # Distant blue planet rising below the horizon.
         cx, cy = w * 0.70, h * 1.08
         r = min(w, h) * 0.48
         self.canvas.create_oval(cx-r, cy-r, cx+r, cy+r,
-                                fill="#071522", outline="#1f4358", width=2)
+                                fill="#071522", outline="#2b5368", width=2)
         self.canvas.create_arc(cx-r, cy-r, cx+r, cy+r,
                                start=198, extent=145,
-                               outline="#5d7c8d", width=2)
+                               outline="#62889b", width=2)
 
-    def _draw_landscape(self, scene):
+    def _draw_space_overlay(self, alpha):
+        # Lightweight atmospheric veil during a space/day transition.
         w, h = self.width, self.height
-        horizon = h * 0.64
+        fill = self._blend_hex("#07101c", "#000000", min(1.0, alpha * 0.35))
+        self.canvas.create_rectangle(0, 0, w, h, fill=fill, outline="")
 
+    def _draw_day_overlay(self, alpha):
+        w, h = self.width, self.height
+        fill = self._blend_hex("#bde8ff", "#ffffff", min(1.0, alpha * 0.22))
+        self.canvas.create_rectangle(0, 0, w, h, fill=fill, outline="")
+
+    def _draw_day_world(self, scene, transition):
+        w, h = self.width, self.height
+        horizon = h * 0.62
+
+        now = self.environment.get("time") or datetime.now()
+        sun_progress = self._sun_progress(now)
         if scene == "sunrise":
-            sun_x, sun_y = w * 0.76, h * 0.47
+            sun_progress = 0.12
         elif scene == "sunset":
-            sun_x, sun_y = w * 0.76, h * 0.43
-        else:
-            sun_x, sun_y = w * 0.78, h * 0.27
+            sun_progress = 0.88
+        elif scene in {"day", "sunrise", "sunset"}:
+            sun_progress = max(0.0, min(1.0, sun_progress))
 
-        # Large layered sun with rays.
-        ray_length = min(w, h) * 0.18
-        for i in range(16):
-            angle = i * math.tau / 16
-            x1 = sun_x + math.cos(angle) * min(w, h) * 0.075
-            y1 = sun_y + math.sin(angle) * min(w, h) * 0.075
-            x2 = sun_x + math.cos(angle) * ray_length
-            y2 = sun_y + math.sin(angle) * ray_length
-            self.canvas.create_line(x1, y1, x2, y2,
-                                    fill="#9c7130", width=1)
+        # Sun follows a high arc during the day.
+        sun_x = w * (0.10 + 0.80 * sun_progress)
+        arc = math.sin(math.pi * sun_progress)
+        sun_y = h * (0.57 - 0.38 * arc)
+        if scene == "sunrise":
+            sun_y = h * 0.56
+        elif scene == "sunset":
+            sun_y = h * 0.56
 
-        for radius, fill in (
-            (58, "#493a29"), (46, "#77542b"), (34, "#a8732d"),
-            (24, "#d39a3b"), (15, "#f3c968")
+        sun_r = min(w, h) * 0.065
+        for factor, fill in (
+            (3.0, "#d7efff"), (2.3, "#b9e4ff"),
+            (1.65, "#fff0ad"), (1.0, "#fff4bf")
         ):
+            r = sun_r * factor
             self.canvas.create_oval(
-                sun_x-radius, sun_y-radius, sun_x+radius, sun_y+radius,
+                sun_x-r, sun_y-r, sun_x+r, sun_y+r,
                 fill=fill, outline=""
             )
 
-        # Atmospheric cloud bands.
-        cloud_y = h * 0.35
-        for offset, scale in ((0, 1.0), (w*.20, .72), (-w*.24, .62)):
-            x = w * .20 + offset
-            self.canvas.create_oval(x, cloud_y, x+w*.23*scale,
-                                    cloud_y+h*.035,
-                                    fill="#50646b", outline="")
+        # Soft cloud banks with darker undersides.
+        cloud_specs = [
+            (0.08, 0.25, 0.22, 0.055),
+            (0.36, 0.17, 0.25, 0.045),
+            (0.68, 0.31, 0.20, 0.050),
+        ]
+        for x, y, cw, ch in cloud_specs:
+            px, py = w*x, h*y
+            self.canvas.create_oval(px, py, px+w*cw, py+h*ch,
+                                    fill="#ffffff", outline="")
+            self.canvas.create_oval(px+w*cw*.16, py-h*ch*.45,
+                                    px+w*cw*.48, py+h*ch*.55,
+                                    fill="#f8fcff", outline="")
+            self.canvas.create_oval(px+w*cw*.42, py-h*ch*.25,
+                                    px+w*cw*.80, py+h*ch*.65,
+                                    fill="#ffffff", outline="")
+            self.canvas.create_rectangle(
+                px+w*cw*.08, py+h*ch*.42, px+w*cw*.92, py+h*ch*.88,
+                fill="#c7d8e2", outline=""
+            )
 
-        # Layered mountain vista.
+        # Distant blue mountains.
         far = [
-            0, horizon+25, w*.10, horizon-75, w*.20, horizon-30,
-            w*.33, horizon-105, w*.46, horizon-38, w*.59, horizon-92,
-            w*.72, horizon-35, w*.86, horizon-82, w, horizon-25, w, h, 0, h
+            0, horizon+10, w*.10, horizon-95, w*.20, horizon-28,
+            w*.32, horizon-118, w*.45, horizon-42, w*.58, horizon-108,
+            w*.72, horizon-35, w*.86, horizon-88, w, horizon-20, w, h, 0, h
         ]
         mid = [
-            0, horizon+55, w*.14, horizon-12, w*.27, horizon-68,
-            w*.39, horizon+5, w*.53, horizon-58, w*.67, horizon-2,
-            w*.80, horizon-48, w, horizon+10, w, h, 0, h
+            0, horizon+48, w*.13, horizon-15, w*.27, horizon-78,
+            w*.39, horizon+2, w*.53, horizon-64, w*.67, horizon-4,
+            w*.80, horizon-55, w, horizon+8, w, h, 0, h
         ]
         near = [
-            0, horizon+90, w*.17, horizon+30, w*.34, horizon+62,
-            w*.50, horizon+8, w*.66, horizon+55, w*.82, horizon+22,
-            w, horizon+70, w, h, 0, h
+            0, horizon+86, w*.17, horizon+28, w*.34, horizon+58,
+            w*.50, horizon+5, w*.66, horizon+52, w*.82, horizon+18,
+            w, horizon+68, w, h, 0, h
         ]
-        self.canvas.create_polygon(far, fill="#30494b", outline="")
-        self.canvas.create_polygon(mid, fill="#172c2e", outline="")
-        self.canvas.create_polygon(near, fill="#091719", outline="")
+        self.canvas.create_polygon(far, fill="#6d9fbc", outline="")
+        self.canvas.create_polygon(mid, fill="#3d7054", outline="")
+        self.canvas.create_polygon(near, fill="#1f4b32", outline="")
 
-        # Water / valley reflection.
-        water_top = horizon + 92
+        # Green banks.
+        bank_y = horizon + 76
+        self.canvas.create_polygon(
+            0, bank_y, w*.18, bank_y-24, w*.34, bank_y+10,
+            w*.50, bank_y-15, w*.67, bank_y+8, w*.83, bank_y-28,
+            w, bank_y, w, h, 0, h,
+            fill="#163b29", outline=""
+        )
+
+        # Lake/valley.
+        water_top = horizon + 62
         self.canvas.create_rectangle(0, water_top, w, h,
-                                     fill="#071113", outline="")
-        for i in range(10):
-            y = water_top + 8 + i * 11
-            inset = (i % 3) * w * .05
-            self.canvas.create_line(w*.16+inset, y, w*.84-inset, y,
-                                    fill="#183033", width=1)
+                                     fill="#2b7892", outline="")
+        for i in range(15):
+            y = water_top + 8 + i * max(5, h * 0.018)
+            width = w * (0.18 + i * 0.025)
+            cx = w * 0.50
+            self.canvas.create_line(cx-width, y, cx+width, y,
+                                    fill="#65b3c5", width=1)
 
-        # Small atmospheric haze near the horizon.
-        for i in range(3):
-            y = horizon + 8 + i * 13
-            self.canvas.create_line(w*.08, y, w*.92, y,
-                                    fill="#38514f", width=1)
+        # Sun reflection and glints.
+        reflection = 1.0 - abs(sun_progress - 0.5) * 1.2
+        reflection = max(0.25, reflection)
+        for i in range(9):
+            y = water_top + 10 + i * 8
+            half = w * (0.018 + i * 0.006) * reflection
+            self.canvas.create_line(
+                w*.50-half, y, w*.50+half, y,
+                fill="#dff6d2", width=1
+            )
+
+        # Horizon haze makes the day scene feel deep rather than flat.
+        for i in range(5):
+            y = horizon + i * 7
+            self.canvas.create_line(w*.04, y, w*.96, y,
+                                    fill="#b7d6c6", width=1)
+
+        # Foreground pines.
+        for px, scale in ((0.06, 1.0), (0.12, .72), (0.90, .82), (0.96, 1.08)):
+            x = w * px
+            base = h * 0.90
+            height = h * 0.22 * scale
+            self._pine(x, base, height)
+
+    def _pine(self, x, base, height):
+        trunk = max(2, self.width * 0.004)
+        self.canvas.create_rectangle(
+            x-trunk, base-height*.10, x+trunk, base,
+            fill="#17301e", outline=""
+        )
+        for i, width in enumerate((0.20, 0.32, 0.44)):
+            y = base - height * (0.35 + i*.22)
+            hw = height * width
+            self.canvas.create_polygon(
+                x, y-height*.32, x-hw, y+height*.16,
+                x+hw, y+height*.16, fill="#12321f", outline=""
+            )
+
+    def _sun_progress(self, now):
+        sunrise = self.environment.get("sunrise")
+        sunset = self.environment.get("sunset")
+        if not sunrise or not sunset:
+            hour = now.hour + now.minute / 60.0
+            return max(0.0, min(1.0, (hour - 6.0) / 12.0))
+        try:
+            start = sunrise.replace(tzinfo=None)
+            end = sunset.replace(tzinfo=None)
+            current = now.replace(tzinfo=None)
+            total = (end - start).total_seconds()
+            if total <= 0:
+                return 0.5
+            return max(0.0, min(1.0, (current - start).total_seconds() / total))
+        except Exception:
+            return 0.5
+
     def _draw_star_particles(self, cx, cy, radius):
         for particle in self.particles[:18]:
             drift = math.sin(self.phase * 1.8 + particle["phase"]) * 6
@@ -250,11 +371,7 @@ class WiseStar:
                                     fill="#8f6a24", outline="")
 
     def _draw_info(self):
-        now = self.environment.get("time")
-        if now is None:
-            from datetime import datetime
-            now = datetime.now()
-
+        now = self.environment.get("time") or datetime.now()
         time_text = now.strftime("%I:%M %p")
         date_text = now.strftime("%A • %d %B %Y").upper()
         temp = self.environment.get("temperature")
@@ -301,8 +418,10 @@ class WiseStar:
         self.phase += speed
         self.rotation += rotation_speed * 0.035
         breathing = math.sin(self.phase) * pulse_amount
-        energy_pulse = ((math.sin(self.phase * 2.3) + 1) * 0.5
-                        if self.state in {"speaking", "listening", "error"} else 0)
+        energy_pulse = (
+            (math.sin(self.phase * 2.3) + 1) * 0.5
+            if self.state in {"speaking", "listening", "error"} else 0
+        )
 
         scale = 1.0
         if self.state == "goodbye":
