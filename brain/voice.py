@@ -1,16 +1,18 @@
-import base64
 import re
 import subprocess
 import threading
 
 
 class WiseVoice:
-    """Non-blocking Windows voice with smoother pacing and a calm delivery."""
+    """Non-blocking Windows System.Speech voice with natural pacing."""
 
     PREFERRED_VOICES = (
+        "Microsoft David Desktop",
+        "Microsoft Mark Desktop",
+        "Microsoft Zira Desktop",
         "Microsoft David",
-        "Microsoft Guy Online (Natural) - English (United States)",
         "Microsoft Mark",
+        "Microsoft Zira",
     )
 
     def __init__(self):
@@ -18,33 +20,26 @@ class WiseVoice:
 
     def remove_emojis(self, text):
         text = re.sub(
-            r'[U0001F300-U0001FAFF]'
-            r'|[U00002700-U000027BF]'
-            r'|[U00002600-U000026FF]',
+            r'[\U0001F300-\U0001FAFF]'
+            r'|[\U00002700-\U000027BF]'
+            r'|[\U00002600-\U000026FF]',
             '',
-            text
+            text,
         )
-        return re.sub(r'[ 	]+', ' ', text).strip()
+        return re.sub(r'[ \t]+', ' ', text).strip()
 
-    def _build_ssml(self, text):
-        safe = (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
-        # Give punctuation room to breathe so speech does not become a
-        # continuous machine-like stream.
-        safe = re.sub(r'([.!?])\s+', r'\1<break time="240ms"/> ', safe)
-        safe = re.sub(r'[,;:]\s+', r'\g<0><break time="110ms"/>', safe)
-        return (
-            '<?xml version="1.0"?>'
-            '<speak version="1.0" '
-            'xmlns="http://www.w3.org/2001/10/synthesis" '
-            'xml:lang="en-US">'
-            '<prosody rate="-7%" pitch="-2st">'
-            + safe +
-            '</prosody></speak>'
-        )
+    def _prepare_text(self, text):
+        text = self.remove_emojis(text)
+
+        # Make common symbols speak naturally instead of spelling punctuation.
+        text = text.replace("—", ", ").replace("–", ", ")
+        text = text.replace("•", ", ")
+        text = re.sub(r'\s*:\s*', ': ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        # Give short responses a gentle conversational rhythm.
+        text = re.sub(r'([.!?])\s+', r'\1  ', text)
+        return text
 
     def speak(self, text, on_start=None, on_finish=None):
         thread = threading.Thread(
@@ -56,37 +51,59 @@ class WiseVoice:
 
     def _speak(self, text, on_start=None, on_finish=None):
         try:
-            print("WISE VOICE:", text)
-            speech_text = self.remove_emojis(text)
+            speech_text = self._prepare_text(text)
 
             if not speech_text:
                 if on_finish:
                     on_finish()
                 return
 
+            print("WISE VOICE:", speech_text)
+
             if on_start:
                 on_start()
 
-            ssml = self._build_ssml(speech_text)
-            encoded = base64.b64encode(ssml.encode("utf-8")).decode("ascii")
-            voices = "|".join(self.PREFERRED_VOICES)
+            encoded = speech_text.encode("utf-8").hex()
 
-            # Pass the SSML as base64 so punctuation or user text cannot
-            # accidentally break the PowerShell command.
-            ps = (
-                "Add-Type -AssemblyName System.Speech; "
-                "$s=New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                "$preferred='" + voices.replace("'", "''") + "'.Split('|'); "
-                "$chosen=$null; "
-                "foreach($v in $preferred){"
-                "try{$s.SelectVoice($v);$chosen=$v;break}catch{}}; "
-                "$xml=[Text.Encoding]::UTF8.GetString("
-                "[Convert]::FromBase64String('" + encoded + "')); "
-                "try{$s.SpeakSsml($xml)}catch{$s.Speak("
-                "[System.Text.RegularExpressions.Regex]::Replace("
-                "$xml,'<[^>]+>',''))}; "
-                "$s.Dispose();"
-            )
+            # IMPORTANT: use normal SpeechSynthesizer.Speak, not SSML.
+            # This prevents WISE from reading XML/SSML tags or individual markup
+            # characters when a Windows voice does not support SSML correctly.
+            ps = r'''
+Add-Type -AssemblyName System.Speech
+$s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+$text = [System.Text.Encoding]::UTF8.GetString(
+    [Convert]::FromHexString('''' + '''''' + '''ENCODED''' + '''''')
+)
+
+$preferred = @(
+    'Microsoft David Desktop',
+    'Microsoft Mark Desktop',
+    'Microsoft Zira Desktop',
+    'Microsoft David',
+    'Microsoft Mark',
+    'Microsoft Zira'
+)
+
+$voices = $s.GetInstalledVoices() |
+    Where-Object { $_.Enabled } |
+    ForEach-Object { $_.VoiceInfo.Name }
+
+$selected = $null
+foreach ($wanted in $preferred) {
+    $selected = $voices | Where-Object { $_ -eq $wanted } | Select-Object -First 1
+    if ($selected) { break }
+}
+
+if ($selected) {
+    $s.SelectVoice($selected)
+}
+
+$s.Rate = -1
+$s.Volume = 100
+$s.Speak($text)
+$s.Dispose()
+'''
+            ps = ps.replace("'''ENCODED'''", encoded)
 
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps],
@@ -95,6 +112,7 @@ class WiseVoice:
                 stderr=subprocess.DEVNULL,
                 timeout=120,
             )
+
             print("WISE FINISHED SPEAKING")
 
         except Exception as error:
