@@ -6,7 +6,6 @@ import threading
 class WiseVoice:
 
     def __init__(self):
-
         print("WISE voice system initialized.")
 
     # =========================
@@ -14,10 +13,6 @@ class WiseVoice:
     # =========================
 
     def remove_emojis(self, text):
-
-        # Remove emoji and other Unicode symbols
-        # that Windows Speech may try to pronounce.
-
         text = re.sub(
             r'[\U0001F300-\U0001FAFF]'
             r'|[\U00002700-\U000027BF]'
@@ -25,58 +20,40 @@ class WiseVoice:
             '',
             text
         )
-
         return text.strip()
 
     # =========================
     # SPEAK
     # =========================
 
-    def speak(self, text):
-
-        # Run speech in a background thread
-        # so the WISE interface does not freeze.
-
+    def speak(self, text, on_start=None, on_finish=None):
+        """Speak in the background and optionally report lifecycle events."""
         speech_thread = threading.Thread(
             target=self._speak,
-            args=(text,),
-            daemon=True
+            args=(text, on_start, on_finish),
+            daemon=True,
         )
-
         speech_thread.start()
 
     # =========================
     # ACTUAL SPEECH
     # =========================
 
-    def _speak(self, text):
-
+    def _speak(self, text, on_start=None, on_finish=None):
         try:
+            print("WISE VOICE:", text)
 
-            print(
-                "WISE VOICE:",
-                text
-            )
-
-            # Remove emojis before speaking
-
-            speech_text = self.remove_emojis(
-                text
-            )
-
-            # If the message contains only
-            # emojis or symbols, don't speak.
+            speech_text = self.remove_emojis(text)
 
             if not speech_text:
-
+                if on_finish:
+                    on_finish()
                 return
 
-            # Escape apostrophes for PowerShell
+            if on_start:
+                on_start()
 
-            safe_text = speech_text.replace(
-                "'",
-                "''"
-            )
+            safe_text = speech_text.replace("'", "''")
 
             command = (
                 "Add-Type -AssemblyName System.Speech; "
@@ -90,18 +67,19 @@ class WiseVoice:
                     "powershell",
                     "-NoProfile",
                     "-Command",
-                    command
+                    command,
                 ],
-                creationflags=subprocess.CREATE_NO_WINDOW
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
 
-            print(
-                "WISE FINISHED SPEAKING"
-            )
+            print("WISE FINISHED SPEAKING")
 
         except Exception as error:
+            print("VOICE ERROR:", error)
 
-            print(
-                "VOICE ERROR:",
-                error
-            )
+        finally:
+            if on_finish:
+                try:
+                    on_finish()
+                except Exception as callback_error:
+                    print("VOICE CALLBACK ERROR:", callback_error)

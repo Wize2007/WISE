@@ -23,12 +23,17 @@ class WiseCommands:
             "- What do you remember?"
         )
 
-    def status(self, emotion, expression):
-        return (
+    def status(self, emotion, expression, outfit=None):
+        result = (
             f"WISE status:\n"
             f"Emotion: {emotion}\n"
             f"Expression: {expression}"
         )
+
+        if outfit is not None:
+            result += f"\nOutfit: {outfit}"
+
+        return result
 
     def memory_status(self, memories):
         if not memories:
