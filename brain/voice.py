@@ -1,10 +1,11 @@
+import base64
 import re
 import subprocess
 import threading
 
 
 class WiseVoice:
-    """Non-blocking Windows System.Speech voice with natural pacing."""
+    """Non-blocking Windows speech with PowerShell 5.1-compatible diagnostics."""
 
     PREFERRED_VOICES = (
         "Microsoft David Desktop",
@@ -20,94 +21,121 @@ class WiseVoice:
 
     def remove_emojis(self, text):
         text = re.sub(
-            r'[\U0001F300-\U0001FAFF]'
-            r'|[\U00002700-\U000027BF]'
-            r'|[\U00002600-\U000026FF]',
-            '',
-            text,
+            r"[\U0001F300-\U0001FAFF]"
+            r"|[\U00002700-\U000027BF]"
+            r"|[\U00002600-\U000026FF]",
+            "",
+            str(text),
         )
-        return re.sub(r'[ \t]+', ' ', text).strip()
+        return re.sub(r"[ \t]+", " ", text).strip()
 
     def _prepare_text(self, text):
         text = self.remove_emojis(text)
         text = text.replace("—", ", ").replace("–", ", ")
         text = text.replace("•", ", ")
-        text = re.sub(r'\s+', ' ', text).strip()
-        text = re.sub(r'([.!?])\s+', r'\1  ', text)
-        return text
+        return re.sub(r"\s+", " ", text).strip()
 
     def speak(self, text, on_start=None, on_finish=None):
-        thread = threading.Thread(
+        threading.Thread(
             target=self._speak,
             args=(text, on_start, on_finish),
             daemon=True,
-        )
-        thread.start()
+        ).start()
 
     def _speak(self, text, on_start=None, on_finish=None):
         try:
             speech_text = self._prepare_text(text)
             if not speech_text:
-                if on_finish:
-                    on_finish()
                 return
 
             print("WISE VOICE:", speech_text)
             if on_start:
                 on_start()
 
-            encoded = speech_text.encode("utf-8").hex()
-            ps = f"""
+            # Base64 avoids PowerShell quoting problems and works in Windows
+            # PowerShell 5.1 (unlike Convert.FromHexString, which is newer).
+            encoded_text = base64.b64encode(
+                speech_text.encode("utf-8")
+            ).decode("ascii")
+
+            preferred = list(self.PREFERRED_VOICES)
+            preferred_ps = ", ".join(
+                "'" + voice.replace("'", "''") + "'" for voice in preferred
+            )
+
+            ps_script = f"""
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Speech
 $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
-$text = [System.Text.Encoding]::UTF8.GetString(
-    [Convert]::FromHexString('{encoded}')
-)
+try {{
+    $text = [System.Text.Encoding]::UTF8.GetString(
+        [System.Convert]::FromBase64String('{encoded_text}')
+    )
+    $preferred = @({preferred_ps})
+    $voices = $s.GetInstalledVoices() |
+        Where-Object {{ $_.Enabled }} |
+        ForEach-Object {{ $_.VoiceInfo.Name }}
 
-$preferred = @(
-    'Microsoft David Desktop',
-    'Microsoft Mark Desktop',
-    'Microsoft Zira Desktop',
-    'Microsoft David',
-    'Microsoft Mark',
-    'Microsoft Zira'
-)
+    $selected = $null
+    foreach ($wanted in $preferred) {{
+        if ($voices -contains $wanted) {{
+            $selected = $wanted
+            break
+        }}
+    }}
 
-$voices = $s.GetInstalledVoices() |
-    Where-Object {{ $_.Enabled }} |
-    ForEach-Object {{ $_.VoiceInfo.Name }}
+    if ($selected) {{
+        $s.SelectVoice($selected)
+        Write-Output "WISE selected voice: $selected"
+    }} else {{
+        Write-Output "WISE warning: no preferred voice found; using system default."
+    }}
 
-$selected = $null
-foreach ($wanted in $preferred) {{
-    $selected = $voices | Where-Object {{ $_ -eq $wanted }} | Select-Object -First 1
-    if ($selected) {{ break }}
+    $s.Rate = -1
+    $s.Volume = 100
+    $s.Speak($text)
+}} finally {{
+    $s.Dispose()
 }}
-
-if ($selected) {{
-    $s.SelectVoice($selected)
-}}
-
-$s.Rate = -1
-$s.Volume = 100
-$s.Speak($text)
-$s.Dispose()
 """
 
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps],
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+            encoded_script = base64.b64encode(
+                ps_script.encode("utf-16le")
+            ).decode("ascii")
+
+            result = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-EncodedCommand",
+                    encoded_script,
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            print("WISE FINISHED SPEAKING")
 
+            if result.stdout.strip():
+                print(result.stdout.strip())
+
+            if result.returncode != 0:
+                print("WISE POWERSHELL ERROR:", result.stderr.strip())
+            else:
+                print("WISE FINISHED SPEAKING")
+
+        except subprocess.TimeoutExpired:
+            print("VOICE ERROR: speech timed out after 120 seconds.")
         except Exception as error:
-            print("VOICE ERROR:", error)
-
+            print("VOICE ERROR:", repr(error))
         finally:
             if on_finish:
                 try:
                     on_finish()
                 except Exception as callback_error:
-                    print("VOICE CALLBACK ERROR:", callback_error)
+                    print("VOICE CALLBACK ERROR:", repr(callback_error))
