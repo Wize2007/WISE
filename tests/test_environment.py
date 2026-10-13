@@ -53,7 +53,7 @@ class WiseEnvironmentTests(unittest.TestCase):
             environment._refresh()
 
         self.assertIsNone(environment.temperature)
-        self.assertEqual(environment.weather, "Weather unavailable")
+        self.assertEqual(environment.weather_text, "Weather unavailable")
         self.assertFalse(environment._busy)
 
 
