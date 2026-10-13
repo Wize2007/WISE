@@ -1,4 +1,5 @@
 import tkinter as tk
+from datetime import datetime
 
 from brain.brain import WiseBrain
 from brain.environment import WiseEnvironment
@@ -44,11 +45,30 @@ class WiseInterface:
         self.environment.refresh_async()
         self._update_clock()
 
-        introduction = self.brain.introduce()
+        introduction = self._opening_greeting()
         self.add_message("WISE", introduction)
         self.speak(introduction)
 
         self.message.focus_set()
+
+    @staticmethod
+    def _opening_greeting(now=None):
+        """Return WISE's startup greeting for the computer's local time."""
+        now = now or datetime.now()
+        hour = now.hour
+
+        if 5 <= hour < 8:
+            period = "this fine morning"
+        elif 8 <= hour < 12:
+            period = "this morning"
+        elif 12 <= hour < 17:
+            period = "this afternoon"
+        elif 17 <= hour < 21:
+            period = "this evening"
+        else:
+            period = "tonight"
+
+        return f"Hello, Master Wisdom! What can I do for you {period}?"
 
     # ==================================================
     # WINDOW

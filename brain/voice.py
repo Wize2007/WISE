@@ -17,6 +17,7 @@ class WiseVoice:
     )
 
     def __init__(self):
+        self._speech_lock = threading.Lock()
         print("WISE voice system initialized.")
 
     def remove_emojis(self, text):
@@ -43,6 +44,11 @@ class WiseVoice:
         ).start()
 
     def _speak(self, text, on_start=None, on_finish=None):
+        # Serialize speech requests so overlapping replies cannot speak at once.
+        with self._speech_lock:
+            self._speak_unlocked(text, on_start, on_finish)
+
+    def _speak_unlocked(self, text, on_start=None, on_finish=None):
         try:
             speech_text = self._prepare_text(text)
             if not speech_text:

@@ -1338,6 +1338,10 @@ class WiseBrain:
         # IDENTITY
         # ==================================================
 
+        if any(phrase in message for phrase in ("who created you", "who made you", "who built you", "who is your creator", "who developed you", "who programmed you")):
+            self.set_emotion("happy")
+            return "Wisdom Nzioka created me — a brilliant mind with big dreams! I'm proud to be WISE, his AI companion. What shall we work on today, Master Wisdom?"
+
         if (
             "your name" in message
             or "who are you" in message
