@@ -159,16 +159,10 @@ class WiseStar:
         else:
             self._draw_day_world(scene, transition)
 
-        if transition < 1.0:
-            old_is_space = self._last_scene in {"night", "evening"}
-            new_is_space = scene in {"night", "evening"}
-            if old_is_space != new_is_space:
-                # The palette crossfade carries the transition; keep both worlds
-                # lightweight while they overlap.
-                if old_is_space:
-                    self._draw_space_overlay(1.0 - transition)
-                else:
-                    self._draw_day_overlay(1.0 - transition)
+        # Do not paint an opaque full-canvas overlay during scene changes.
+        # Tkinter Canvas fills do not support alpha transparency, so even a
+        # variable named "alpha" produces a solid rectangle and can wash the
+        # entire evening scene pale. The sky palette already transitions smoothly.
 
     def _draw_space(self, strength=1.0):
         w, h = self.width, self.height
@@ -198,17 +192,6 @@ class WiseStar:
         self.canvas.create_arc(cx-r, cy-r, cx+r, cy+r,
                                start=198, extent=145,
                                outline="#62889b", width=2)
-
-    def _draw_space_overlay(self, alpha):
-        # Lightweight atmospheric veil during a space/day transition.
-        w, h = self.width, self.height
-        fill = self._blend_hex("#07101c", "#000000", min(1.0, alpha * 0.35))
-        self.canvas.create_rectangle(0, 0, w, h, fill=fill, outline="")
-
-    def _draw_day_overlay(self, alpha):
-        w, h = self.width, self.height
-        fill = self._blend_hex("#bde8ff", "#ffffff", min(1.0, alpha * 0.22))
-        self.canvas.create_rectangle(0, 0, w, h, fill=fill, outline="")
 
     def _draw_day_world(self, scene, transition):
         w, h = self.width, self.height
