@@ -39,6 +39,7 @@ class WiseStar:
         self._target_scene = "night"
         self._transition_start = None
         self._transition_duration = 2.5
+        self._ambient_phase = 0.0
 
         self.environment = {
             "scene": "night",
@@ -137,9 +138,11 @@ class WiseStar:
 
     def _current_palette(self):
         progress = self._transition_progress()
+        # Smoothstep easing avoids a linear, mechanical-looking colour change.
+        eased = progress * progress * (3.0 - 2.0 * progress)
         a = self.SCENE_PALETTES.get(self._last_scene, self.SCENE_PALETTES["night"])
         b = self.SCENE_PALETTES.get(self._target_scene, self.SCENE_PALETTES["night"])
-        return tuple(self._blend_hex(a[i], b[i], progress) for i in range(2)), progress
+        return tuple(self._blend_hex(a[i], b[i], eased) for i in range(2)), progress
 
     def _draw_background(self):
         (top, bottom), transition = self._current_palette()
@@ -171,9 +174,11 @@ class WiseStar:
             if p["y"] < 0.03:
                 p["y"] = 0.97
             x, y = p["x"] * w, p["y"] * h
-            r = p["size"]
+            twinkle = (math.sin(self._ambient_phase * 1.6 + p["phase"]) + 1.0) * 0.5
+            r = p["size"] * (0.85 + twinkle * 0.25)
+            star_color = self._blend_hex("#827654", "#f0dca0", 0.35 + twinkle * 0.45)
             self.canvas.create_oval(x-r, y-r, x+r, y+r,
-                                    fill="#d8c38d", outline="")
+                                    fill=star_color, outline="")
 
         mx, my = w * 0.79, h * 0.23
         mr = min(w, h) * 0.052
@@ -232,8 +237,9 @@ class WiseStar:
             (0.36, 0.17, 0.25, 0.045),
             (0.68, 0.31, 0.20, 0.050),
         ]
-        for x, y, cw, ch in cloud_specs:
-            px, py = w*x, h*y
+        for index, (x, y, cw, ch) in enumerate(cloud_specs):
+            drift = math.sin(self._ambient_phase * 0.12 + index * 1.7) * w * 0.008
+            px, py = w*x + drift, h*y
             self.canvas.create_oval(px, py, px+w*cw, py+h*ch,
                                     fill="#ffffff", outline="")
             self.canvas.create_oval(px+w*cw*.16, py-h*ch*.45,
@@ -282,10 +288,12 @@ class WiseStar:
                                      fill="#2b7892", outline="")
         for i in range(15):
             y = water_top + 8 + i * max(5, h * 0.018)
-            width = w * (0.18 + i * 0.025)
-            cx = w * 0.50
+            shimmer = math.sin(self._ambient_phase * 0.7 + i * 0.55)
+            width = w * (0.18 + i * 0.025) * (0.96 + shimmer * 0.04)
+            cx = w * (0.50 + shimmer * 0.012)
+            water_color = self._blend_hex("#367f96", "#8ad0dc", 0.35 + (shimmer + 1) * 0.12)
             self.canvas.create_line(cx-width, y, cx+width, y,
-                                    fill="#65b3c5", width=1)
+                                    fill=water_color, width=1)
 
         # Sun reflection and glints.
         reflection = 1.0 - abs(sun_progress - 0.5) * 1.2
@@ -451,6 +459,7 @@ class WiseStar:
         try:
             if not self.canvas.winfo_exists():
                 return
+            self._ambient_phase += 0.04
             self._draw_star()
             self._after_id = self.canvas.after(50, self._animate)
         except tk.TclError:
