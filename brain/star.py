@@ -85,11 +85,19 @@ class WiseStar:
         self.emotion = emotion if emotion in self.EMOTION_SETTINGS else "neutral"
 
     def set_environment(self, data):
-        if not data:
+        if not isinstance(data, dict) or not data:
             return
+
+        # Ignore unknown scene names instead of mixing a night palette with
+        # day-scene drawing or breaking future appearance extensions.
+        updates = dict(data)
         old_scene = self.environment.get("scene", "night")
-        self.environment.update(data)
-        new_scene = self.environment.get("scene", old_scene)
+        new_scene = updates.get("scene", old_scene)
+        if new_scene not in self.SCENE_PALETTES:
+            updates.pop("scene", None)
+            new_scene = old_scene
+
+        self.environment.update(updates)
         if new_scene != self._target_scene:
             self._last_scene = self._target_scene
             self._target_scene = new_scene
