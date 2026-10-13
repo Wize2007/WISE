@@ -28,6 +28,34 @@ class WiseEnvironmentTests(unittest.TestCase):
         self.assertEqual(snapshot["weather"], "Weather unavailable")
         self.assertEqual(snapshot["location"], environment.location_name)
 
+    def test_sunrise_and_sunset_data_selects_expected_scenes(self):
+        environment = WiseEnvironment()
+        environment.sunrise = datetime(2026, 5, 1, 6, 0)
+        environment.sunset = datetime(2026, 5, 1, 18, 0)
+        cases = (
+            (datetime(2026, 5, 1, 5, 0), "night"),
+            (datetime(2026, 5, 1, 6, 30), "sunrise"),
+            (datetime(2026, 5, 1, 12, 0), "day"),
+            (datetime(2026, 5, 1, 17, 30), "sunset"),
+            (datetime(2026, 5, 1, 19, 0), "evening"),
+            (datetime(2026, 5, 1, 21, 0), "night"),
+        )
+
+        for current_time, expected_scene in cases:
+            with self.subTest(time=current_time, scene=expected_scene):
+                with patch("brain.environment.datetime") as clock:
+                    clock.now.return_value = current_time
+                    self.assertEqual(environment.tick()["scene"], expected_scene)
+
+    def test_network_failure_keeps_weather_unavailable_and_releases_refresh_lock(self):
+        environment = WiseEnvironment()
+        with patch("brain.environment.urllib.request.urlopen", side_effect=OSError("offline")):
+            environment._refresh()
+
+        self.assertIsNone(environment.temperature)
+        self.assertEqual(environment.weather, "Weather unavailable")
+        self.assertFalse(environment._busy)
+
 
 if __name__ == "__main__":
     unittest.main()
